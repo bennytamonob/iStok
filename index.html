@@ -30,15 +30,18 @@
         }
     </script>
     <style>
+        /* Screen Styles */
+        @media screen {
+            #print-area { display: none; }
+        }
         /* Print Styles */
         @media print {
-            body * { visibility: hidden; }
-            #print-area, #print-area * { visibility: visible; }
-            #print-area { position: absolute; left: 0; top: 0; width: 100%; }
-            .no-print { display: none !important; }
-            .print-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+            body { background-color: white; margin: 0; padding: 0; }
+            #login-screen, #main-app, #item-modal { display: none !important; }
+            #print-area { display: block !important; width: 100%; }
+            .print-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
             .print-item { border: 1px solid #ccc; padding: 10px; text-align: center; page-break-inside: avoid; }
-            .print-item img, .print-item svg { max-width: 100%; height: auto; margin: 0 auto; display: block;}
+            .print-item img, .print-item svg, .print-item canvas { max-width: 100%; height: auto; margin: 0 auto; display: block;}
         }
         /* Custom Scrollbar */
         ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -318,11 +321,17 @@
                     <input type="number" id="item-stock" min="0" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-secondary outline-none text-sm" required placeholder="0">
                 </div>
 
-                <div id="form-company-wrapper" class="hidden">
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Perusahaan (Hak Akses Super Admin)</label>
-                    <select id="item-company" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-secondary outline-none text-sm">
-                        <!-- Populated by JS -->
-                    </select>
+                <div id="form-company-wrapper">
+                    <label id="label-company" class="block text-sm font-medium text-gray-700 mb-1">Perusahaan</label>
+                    
+                    <!-- Input untuk Super Admin (Bisa ketik baru atau pilih dari daftar) -->
+                    <input type="text" id="item-company" list="company-list" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-secondary outline-none text-sm hidden" placeholder="Ketik atau pilih perusahaan">
+                    <datalist id="company-list">
+                        <!-- Populated dynamically by JS -->
+                    </datalist>
+
+                    <!-- Tampilan statis/readonly untuk Admin biasa -->
+                    <input type="text" id="item-company-readonly" class="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-600 outline-none text-sm hidden" readonly>
                 </div>
 
                 <div class="mt-6 flex justify-end gap-3 pt-4 border-t border-gray-100">
@@ -337,7 +346,7 @@
     </div>
 
     <!-- HIDDEN PRINT AREA -->
-    <div id="print-area" class="no-print"></div>
+    <div id="print-area"></div>
 
 
     <!-- ========================================== -->
@@ -354,7 +363,7 @@
         const state = {
             user: null, // { username, role (super_admin/admin), company }
             items: [], // { id, name, code, stock, company }
-            companies: ['Perusahaan A', 'Perusahaan B', 'Perusahaan C'], // Daftar statis atau bisa dimuat dari backend
+            companies: [], // Daftar ini sekarang diambil otomatis dari database
             selectedForPrint: new Set(),
             isLoading: false
         };
@@ -432,6 +441,12 @@
                     company: state.user.role === 'super_admin' ? document.getElementById('item-company').value : state.user.company
                 };
 
+                // Pengecekan super admin, pastikan company tidak kosong
+                if (state.user.role === 'super_admin' && !newItem.company.trim()) {
+                    alert("Nama perusahaan wajib diisi.");
+                    return;
+                }
+
                 const btnText = document.getElementById('btn-save-text');
                 const spinner = document.getElementById('save-spinner');
                 btnText.textContent = 'Menyimpan...';
@@ -468,20 +483,20 @@
             if (state.user.role === 'super_admin') {
                 adminEls.forEach(el => el.classList.remove('hidden'));
                 
-                // Populate Company Filter
-                const filterSel = document.getElementById('filter-company');
-                filterSel.innerHTML = '<option value="ALL">Semua Perusahaan</option>';
-                state.companies.forEach(c => filterSel.innerHTML += `<option value="${c}">${c}</option>`);
-                
-                // Populate Company form dropdown
-                const compSel = document.getElementById('item-company');
-                compSel.innerHTML = '';
-                state.companies.forEach(c => compSel.innerHTML += `<option value="${c}">${c}</option>`);
-                document.getElementById('form-company-wrapper').classList.remove('hidden');
-
+                // Form UI untuk Super Admin
+                document.getElementById('item-company').classList.remove('hidden');
+                document.getElementById('item-company-readonly').classList.add('hidden');
+                document.getElementById('label-company').textContent = "Perusahaan (Hak Akses Super Admin)";
+                document.getElementById('item-company').required = true;
             } else {
                 adminEls.forEach(el => el.classList.add('hidden'));
-                document.getElementById('form-company-wrapper').classList.add('hidden');
+                
+                // Form UI untuk Admin (menampilkan readonly company)
+                document.getElementById('item-company').classList.add('hidden');
+                document.getElementById('item-company').required = false;
+                document.getElementById('item-company-readonly').classList.remove('hidden');
+                document.getElementById('item-company-readonly').value = state.user.company;
+                document.getElementById('label-company').textContent = "Perusahaan";
             }
 
             switchView('dashboard');
@@ -525,6 +540,28 @@
             const res = await fetchAPI('getItems', { role: state.user.role, company: state.user.company });
             if(res.success) {
                 state.items = res.data;
+                
+                // Update daftar dinamis perusahaan (hanya berguna untuk super admin)
+                if (state.user.role === 'super_admin') {
+                    // Ekstrak nama perusahaan yang unik dari database barang
+                    const uniqueComps = [...new Set(state.items.map(i => i.company))].filter(Boolean);
+                    if(uniqueComps.length > 0) {
+                        state.companies = uniqueComps;
+                    }
+
+                    // Update Filter Table
+                    const filterSel = document.getElementById('filter-company');
+                    const currentFilter = filterSel.value;
+                    filterSel.innerHTML = '<option value="ALL">Semua Perusahaan</option>';
+                    state.companies.forEach(c => filterSel.innerHTML += `<option value="${c}">${c}</option>`);
+                    if(currentFilter) filterSel.value = currentFilter;
+                    
+                    // Update Datalist (untuk Input form Add/Edit)
+                    const datalist = document.getElementById('company-list');
+                    datalist.innerHTML = '';
+                    state.companies.forEach(c => datalist.innerHTML += `<option value="${c}">`);
+                }
+
                 updateDashboard();
                 renderTable();
                 if(!document.getElementById('view-print').classList.contains('hidden')) {
@@ -632,6 +669,11 @@
                 document.getElementById('modal-title').textContent = 'Tambah Data Barang';
                 document.getElementById('item-form').reset();
                 
+                // Pastikan untuk admin readonly inputnya tidak hilang isinya karena form di reset
+                if (state.user.role !== 'super_admin') {
+                    document.getElementById('item-company-readonly').value = state.user.company;
+                }
+                
                 // Generate ID & Barcode secara otomatis
                 const timestamp = Date.now().toString();
                 const randomStr = Math.floor(1000 + Math.random() * 9000).toString();
@@ -661,7 +703,10 @@
 
             document.getElementById('item-name').value = item.name;
             document.getElementById('item-stock').value = item.stock;
-            if(state.user.role === 'super_admin') document.getElementById('item-company').value = item.company;
+            
+            if(state.user.role === 'super_admin') {
+                document.getElementById('item-company').value = item.company;
+            }
         }
 
         function closeModal() {
